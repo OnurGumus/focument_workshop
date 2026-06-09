@@ -70,24 +70,29 @@ public sealed record Document(DocumentId Id, Title Title, Content Content)
 }
 
 // Commands are intentions. A first write is requested by an Owner (quota-gated
-// via the saga); the saga then issues Approve or Hold. Approve/Reject are also
-// the colleague-approval actions. Updating an existing document skips the saga.
+// via the saga); the saga then issues AutoApprove (within quota) or Hold (over).
+// Approve/Reject are a *colleague's* verdict on a held document and carry the
+// approver, so the aggregate can enforce separation of duties (creator != approver).
+// Updating an existing document skips the saga.
 public union DocumentCommand(
     DocumentCommand.CreateOrUpdate,
+    DocumentCommand.AutoApprove,
     DocumentCommand.Approve,
     DocumentCommand.Reject,
     DocumentCommand.Hold)
 {
     public record CreateOrUpdate(Document Document, Username Owner);
-    public record Approve;
-    public record Reject;
+    public record AutoApprove;                  // the saga's within-quota grant — no human, no check
+    public record Approve(Username Approver);    // a colleague approving a held doc
+    public record Reject(Username Approver);     // a colleague rejecting a held doc
     public record Hold;
 }
 
 // Business-rule violations.
-public union DocumentError(DocumentError.DocumentNotFound)
+public union DocumentError(DocumentError.DocumentNotFound, DocumentError.SelfApproval)
 {
     public record DocumentNotFound;
+    public record SelfApproval;                 // the owner tried to approve/reject their own document
 }
 
 // Events are facts. CreateOrUpdateRequested records a new pending document and

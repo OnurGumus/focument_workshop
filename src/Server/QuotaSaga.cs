@@ -108,7 +108,7 @@ public sealed class QuotaSaga : Saga<DocumentEvent, QuotaSagaData, QuotaState>
             QuotaState.Approving => new()
             {
                 Transition = Stay(),
-                Commands = [ToDocument(new DocumentCommand.Approve())]
+                Commands = [ToDocument(new DocumentCommand.AutoApprove())]
             },
             QuotaState.Holding => new()
             {

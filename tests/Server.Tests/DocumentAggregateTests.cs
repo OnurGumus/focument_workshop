@@ -78,11 +78,13 @@ public class DocumentAggregateTests
     }
 
     [Fact]
-    public void Approve_on_a_held_document_persists_Approved()
+    public void A_colleague_approving_a_held_document_persists_Approved()
     {
+        // A *different* user (bob) decides alice's held document.
         var doc = Doc();
-        var state = DocumentState.Initial with { Document = doc, Version = 1L, Approval = Approval.AwaitingApproval };
-        var cmd = TestEnvelope.Command<DocumentCommand>(new DocumentCommand.Approve());
+        var state = DocumentState.Initial with
+        { Document = doc, Owner = Owner("alice"), Version = 1L, Approval = Approval.AwaitingApproval };
+        var cmd = TestEnvelope.Command<DocumentCommand>(new DocumentCommand.Approve(Owner("bob")));
 
         var action = Aggregate.HandleCommand(cmd, state);
 
@@ -92,13 +94,47 @@ public class DocumentAggregateTests
     }
 
     [Fact]
-    public void Approve_when_already_approved_defers_instead_of_persisting()
+    public void The_owner_cannot_approve_their_own_document()
     {
-        // Idempotency: the saga re-issues Approve on recovery — a second Approved
-        // must not be journaled, but it's still deferred (published) so the saga proceeds.
+        // Separation of duties — enforced in the aggregate (it folded the Owner),
+        // not in the web layer. alice approving alice's document is refused.
+        var doc = Doc();
+        var alice = Owner("alice");
+        var state = DocumentState.Initial with
+        { Document = doc, Owner = alice, Version = 1L, Approval = Approval.AwaitingApproval };
+        var cmd = TestEnvelope.Command<DocumentCommand>(new DocumentCommand.Approve(alice));
+
+        var action = Aggregate.HandleCommand(cmd, state);
+
+        var deferred = Assert.IsType<FCQRS.Common.EventAction<DocumentEvent>.DeferEvent>(action);
+        Assert.True(
+            deferred.Item is DocumentEvent.Error { ErrorDetails: DocumentError.SelfApproval },
+            $"expected Error(SelfApproval), got {deferred.Item}");
+    }
+
+    [Fact]
+    public void AutoApprove_within_quota_persists_Approved()
+    {
+        // The saga's within-quota grant — no human, no separation-of-duties check.
+        var doc = Doc();
+        var state = DocumentState.Initial with { Document = doc, Version = 1L }; // Pending
+        var cmd = TestEnvelope.Command<DocumentCommand>(new DocumentCommand.AutoApprove());
+
+        var action = Aggregate.HandleCommand(cmd, state);
+
+        Assert.Equal(
+            EventActions.Persist<DocumentEvent>(new DocumentEvent.Approved(doc.Id)),
+            action);
+    }
+
+    [Fact]
+    public void AutoApprove_when_already_approved_defers_instead_of_persisting()
+    {
+        // Idempotency: the saga re-issues AutoApprove on recovery — a second
+        // Approved must not be journaled, but it's still deferred (published).
         var doc = Doc();
         var state = DocumentState.Initial with { Document = doc, Version = 1L, Approval = Approval.Approved };
-        var cmd = TestEnvelope.Command<DocumentCommand>(new DocumentCommand.Approve());
+        var cmd = TestEnvelope.Command<DocumentCommand>(new DocumentCommand.AutoApprove());
 
         var action = Aggregate.HandleCommand(cmd, state);
 

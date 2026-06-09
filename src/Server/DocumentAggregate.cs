@@ -14,8 +14,10 @@ namespace Server;
 // approved document must be a no-op, not a second event.
 public enum Approval { Pending, AwaitingApproval, Approved, Rejected }
 
-// In-memory state, rebuilt from the event journal on demand.
-public record DocumentState(Document? Document, long Version, Approval Approval = Approval.Pending)
+// In-memory state, rebuilt from the event journal on demand. We keep the Owner
+// (from the creating event) so the aggregate itself can enforce separation of
+// duties — the creator may not approve their own document.
+public record DocumentState(Document? Document, long Version, Approval Approval = Approval.Pending, Username? Owner = null)
 {
     public static readonly DocumentState Initial = new(null, 0L);
 }
@@ -37,9 +39,9 @@ public sealed class DocumentAggregate : Aggregate<DocumentState, DocumentCommand
         _log.LogInformation("apply {Event}", Describe.Case(evt));
         return evt.EventDetails switch
         {
-            // A new pending document: store content, bump version, awaiting verdict.
+            // A new pending document: store content + owner, bump version, awaiting verdict.
             DocumentEvent.CreateOrUpdateRequested e =>
-                state with { Document = e.Document, Version = state.Version + 1L, Approval = Approval.Pending },
+                state with { Document = e.Document, Owner = e.Owner, Version = state.Version + 1L, Approval = Approval.Pending },
             // A plain edit of an existing document: new content/version, status kept.
             DocumentEvent.Updated e =>
                 state with { Document = e.Document, Version = state.Version + 1L },
@@ -73,10 +75,26 @@ public sealed class DocumentAggregate : Aggregate<DocumentState, DocumentCommand
             (DocumentCommand.CreateOrUpdate, _) =>
                 EventActions.Defer<DocumentEvent>(new DocumentEvent.Error(new DocumentError.DocumentNotFound())),
 
-            // Verdicts — from the saga (quota ok) or a colleague. Each is
-            // idempotent: if already in the target state, defer (still published
-            // so a re-issuing saga sees it and proceeds) rather than persist a
-            // duplicate event. This makes the saga's at-least-once retries safe.
+            // Within quota → the saga auto-approves. No human is involved, so no
+            // separation-of-duties check. Idempotent: re-issued on saga recovery,
+            // so defer if already approved rather than journal a duplicate.
+            (DocumentCommand.AutoApprove, { } doc) =>
+                state.Approval == Approval.Approved
+                    ? EventActions.Defer<DocumentEvent>(new DocumentEvent.Approved(doc.Id))
+                    : EventActions.Persist<DocumentEvent>(new DocumentEvent.Approved(doc.Id)),
+
+            // Separation of duties — the creator may not decide their own document.
+            // Enforced here, in the domain, against the Owner folded from the
+            // creating event. Deferred (published to the caller, not journaled — no
+            // state change), so the web layer learns of the refusal.
+            (DocumentCommand.Approve c, { }) when state.Owner == c.Approver =>
+                EventActions.Defer<DocumentEvent>(new DocumentEvent.Error(new DocumentError.SelfApproval())),
+            (DocumentCommand.Reject c, { }) when state.Owner == c.Approver =>
+                EventActions.Defer<DocumentEvent>(new DocumentEvent.Error(new DocumentError.SelfApproval())),
+
+            // A colleague's verdict. Idempotent: if already in the target state,
+            // defer (still published so a re-issuing caller sees it) rather than
+            // persist a duplicate event.
             (DocumentCommand.Approve, { } doc) =>
                 state.Approval == Approval.Approved
                     ? EventActions.Defer<DocumentEvent>(new DocumentEvent.Approved(doc.Id))

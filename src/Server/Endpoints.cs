@@ -146,16 +146,17 @@ public sealed class Endpoints(
             var docId = form["Id"].ToString();
             var username = form["Username"].ToString();
 
-            if (!Username.TryCreate(username, out _))
+            if (!Username.TryCreate(username, out var approver))
                 return "Error: a username is required";
             if (string.IsNullOrWhiteSpace(docId) || !Guid.TryParse(docId, out _))
                 return "Error: invalid document id";
 
-            var doc = ServerQuery.GetDocument(connString, docId);
-            if (doc is null)
+            // Pre-check that the document exists (an unknown id would otherwise be
+            // ignored by the aggregate and the await below would never complete).
+            // Whether the reviewer may decide it (separation of duties) is the
+            // aggregate's call, not ours — see below.
+            if (ServerQuery.GetDocument(connString, docId) is null)
                 return "Error: document not found";
-            if (doc.Owner == username)
-                return $"You can't {verb} your own document.";
 
             var cid = Values.NewCID();
             var aggregateId = Values.CreateAggregateId(docId);
@@ -163,14 +164,20 @@ public sealed class Endpoints(
             using var awaiter = subs.SubscribeForFirst(cid);
 
             DocumentCommand command = approve
-                ? new DocumentCommand.Approve()
-                : new DocumentCommand.Reject();
+                ? new DocumentCommand.Approve(approver)
+                : new DocumentCommand.Reject(approver);
 
-            await documentHandler(
-                e => approve ? e is DocumentEvent.Approved : e is DocumentEvent.Rejected,
+            var result = await documentHandler(
+                e => (approve ? e is DocumentEvent.Approved : e is DocumentEvent.Rejected)
+                     || e is DocumentEvent.Error,
                 cid,
                 aggregateId,
                 command);
+
+            // The aggregate refused (e.g. self-approval): a deferred Error, so the
+            // read model never changes — return the refusal without awaiting it.
+            if (result.EventDetails is DocumentEvent.Error)
+                return $"You can't {verb} your own document.";
 
             await awaiter.Task;
             return approve ? "Approved!" : "Rejected.";
