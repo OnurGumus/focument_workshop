@@ -88,6 +88,14 @@ public sealed class QuotaSaga : Saga<DocumentEvent, QuotaSagaData, QuotaState>
         ExecuteCommand ToDocument(DocumentCommand command) =>
             SagaCommands.ToOriginator(_documentFactory, command);
 
+        // CRASH DEMO (uncomment to run live): die the instant we reach Approving, before the
+        // Approve command leaves the building. The state change to Approving is
+        // already journaled, so on restart the saga recovers into Approving and
+        // this method runs again with recovering=true — which skips the crash
+        // and re-issues Approve. Kill switch for at-least-once delivery, live.
+        // if (sagaState.State is QuotaState.Approving && !recovering)
+        //     Environment.FailFast("crash demo: dying in Approving before sending Approve");
+
         return sagaState.State switch
         {
             QuotaState.CheckingQuota s => new()
@@ -107,8 +115,9 @@ public sealed class QuotaSaga : Saga<DocumentEvent, QuotaSagaData, QuotaState>
                 Transition = Stay(),
                 Commands = [ToDocument(new DocumentCommand.Hold())]
             },
-            QuotaState.Done => new() { Transition = StopSaga(), Commands = [] },
-            _ => new() { Transition = Stay(), Commands = [] }
+            // No discard arm: the compiler proves these four states are all of
+            // QuotaState, so adding a fifth forces a decision here too.
+            QuotaState.Done => new() { Transition = StopSaga(), Commands = [] }
         };
     }
 }

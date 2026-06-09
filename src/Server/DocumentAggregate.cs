@@ -46,7 +46,9 @@ public sealed class DocumentAggregate : Aggregate<DocumentState, DocumentCommand
             DocumentEvent.Approved => state with { Approval = Approval.Approved },
             DocumentEvent.Rejected => state with { Approval = Approval.Rejected },
             DocumentEvent.HeldForApproval => state with { Approval = Approval.AwaitingApproval },
-            _ => state
+            // Errors are deferred, never persisted — folding one changes nothing.
+            // No discard arm: the compiler proves the switch covers every case.
+            DocumentEvent.Error => state
         };
     }
 

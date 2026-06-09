@@ -60,7 +60,8 @@ public sealed class UserAggregate : Aggregate<UserState, UserCommand, UserEvent>
                 state, // already recorded this document's slot — idempotent
             UserEvent.QuotaApproved e =>
                 state with { Consumed = Prune(state.Consumed.Append(new Consumption(e.DocId, e.ConsumedAt)), e.ConsumedAt) },
-            _ => state
+            // A rejection consumes nothing. No discard arm — exhaustive over the union.
+            UserEvent.QuotaRejected => state
         };
     }
 
@@ -70,8 +71,8 @@ public sealed class UserAggregate : Aggregate<UserState, UserCommand, UserEvent>
         _log.LogInformation("handle {Command}", Describe.Case(cmd));
         return cmd.CommandDetails switch
         {
-            UserCommand.ConsumeQuota c => Decide(state, c.DocId, cmd.CreationDate),
-            _ => EventActions.Ignore<UserEvent>()
+            // ConsumeQuota is the union's only case, so this switch is exhaustive.
+            UserCommand.ConsumeQuota c => Decide(state, c.DocId, cmd.CreationDate)
         };
     }
 
