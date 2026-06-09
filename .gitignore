@@ -1,0 +1,9 @@
+bin/
+obj/
+*.db
+*.db-*
+.vs/
+.idea/
+
+# Local working notes, not part of the teaching material
+HANDOFF.md

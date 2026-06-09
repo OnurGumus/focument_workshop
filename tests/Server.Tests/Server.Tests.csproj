@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- xUnit v3 tests are self-executing (Microsoft Testing Platform). -->
+    <OutputType>Exe</OutputType>
+    <!-- CS8509: the preview union analyzer flags switches as non-exhaustive.
+         NETSDK1057: preview SDK notice. -->
+    <NoWarn>$(NoWarn);CS8509;NETSDK1057</NoWarn>
+  </PropertyGroup>
+
+  <!-- Server.dll references ASP.NET types (HttpContext, WebApplication), so the
+       test host must supply that shared framework even though the tests
+       themselves only touch the domain side and the projection. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.*" />
+    <PackageReference Include="xunit.v3" Version="3.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Server\Server.csproj" />
+    <ProjectReference Include="..\..\src\Model\Model.csproj" />
+  </ItemGroup>
+</Project>
