@@ -34,7 +34,9 @@ public sealed class DocumentAggregate : Aggregate<DocumentState, DocumentCommand
         {
             DocumentEvent.CreatedOrUpdated e =>
                 state with { Document = e.Document, Version = state.Version + 1L },
-            _ => state
+            // Errors are deferred, never persisted — folding one changes nothing.
+            // No discard arm: the compiler proves the switch covers every case.
+            DocumentEvent.Error => state
         };
     }
 
