@@ -213,3 +213,39 @@ table {
 #historyTable {
     margin-top: 1rem;
 }
+
+/* Step 6: quota saga — verdict message + per-document approval status. */
+.message {
+    min-height: 1.2rem;
+    font-weight: 600;
+    color: #2e7d32;
+}
+
+.message-error {
+    color: #c62828;
+}
+
+.cell-status {
+    font-weight: 600;
+}
+
+.status-Pending {
+    color: #b0860b;
+}
+
+.status-Approved {
+    color: #2e7d32;
+}
+
+.status-Rejected {
+    color: #c62828;
+}
+
+.muted {
+    color: #888;
+    font-style: italic;
+}
+
+.status-AwaitingApproval {
+    color: #b0860b;
+}

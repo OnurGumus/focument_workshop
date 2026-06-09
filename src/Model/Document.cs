@@ -69,10 +69,19 @@ public sealed record Document(DocumentId Id, Title Title, Content Content)
     }
 }
 
-// Commands are intentions. For now there is just one.
-public union DocumentCommand(DocumentCommand.CreateOrUpdate)
+// Commands are intentions. A first write is requested by an Owner (quota-gated
+// via the saga); the saga then issues Approve or Hold. Approve/Reject are also
+// the colleague-approval actions. Updating an existing document skips the saga.
+public union DocumentCommand(
+    DocumentCommand.CreateOrUpdate,
+    DocumentCommand.Approve,
+    DocumentCommand.Reject,
+    DocumentCommand.Hold)
 {
-    public record CreateOrUpdate(Document Document);
+    public record CreateOrUpdate(Document Document, Username Owner);
+    public record Approve;
+    public record Reject;
+    public record Hold;
 }
 
 // Business-rule violations.
@@ -81,9 +90,21 @@ public union DocumentError(DocumentError.DocumentNotFound)
     public record DocumentNotFound;
 }
 
-// Events are facts that already happened.
-public union DocumentEvent(DocumentEvent.CreatedOrUpdated, DocumentEvent.Error)
+// Events are facts. CreateOrUpdateRequested records a new pending document and
+// starts the quota saga; Updated is a plain edit (no saga, no quota); Approved/
+// Rejected/HeldForApproval are the saga's or a colleague's verdict.
+public union DocumentEvent(
+    DocumentEvent.CreateOrUpdateRequested,
+    DocumentEvent.Updated,
+    DocumentEvent.Error,
+    DocumentEvent.Approved,
+    DocumentEvent.Rejected,
+    DocumentEvent.HeldForApproval)
 {
-    public record CreatedOrUpdated(Document Document);
+    public record CreateOrUpdateRequested(Document Document, Username Owner);
+    public record Updated(Document Document);
     public record Error(DocumentError ErrorDetails);
+    public record Approved(DocumentId DocumentId);
+    public record Rejected(DocumentId DocumentId);
+    public record HeldForApproval(DocumentId DocumentId);
 }

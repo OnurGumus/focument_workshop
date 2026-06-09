@@ -11,6 +11,10 @@ public class Document
     public long Version { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
+    // Pending → Approved | AwaitingApproval (held) → Approved | Rejected.
+    public string ApprovalStatus { get; set; } = "Pending";
+    // The user who created the document; a colleague (Owner != them) can approve it.
+    public string Owner { get; set; } = "";
 }
 
 // One historical version of a document — the raw material for time travel.

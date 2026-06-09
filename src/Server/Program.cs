@@ -24,7 +24,7 @@ builder.Logging.AddConsoleFormatter<WorkshopConsoleFormatter, WorkshopFormatterO
 var dbPath = Environment.GetEnvironmentVariable("FOCUMENT_DB_PATH") ?? "focument_workshop.db";
 var connectionString = $"Data Source={dbPath};";
 
-// Register the write side, projection and command handler in one call.
+// Register the write side, projection and command handlers in one call.
 builder.Services.AddFocument(connectionString);
 
 // The HTTP endpoints as one injected instance: the read-model connection plus the
@@ -44,5 +44,8 @@ app.MapGet("/api/documents", (Endpoints endpoints) => endpoints.GetDocuments());
 app.MapGet("/api/document/{id}/history", (Endpoints endpoints, HttpContext ctx) => endpoints.GetDocumentHistory(ctx));
 app.MapPost("/api/document", (Endpoints endpoints, HttpContext ctx) => endpoints.CreateOrUpdateDocument(ctx));
 app.MapPost("/api/document/restore", (Endpoints endpoints, HttpContext ctx) => endpoints.RestoreVersion(ctx));
+// Colleague approval of a held (over-quota) document.
+app.MapPost("/api/document/approve", (Endpoints endpoints, HttpContext ctx) => endpoints.ReviewDocument(ctx, approve: true));
+app.MapPost("/api/document/reject", (Endpoints endpoints, HttpContext ctx) => endpoints.ReviewDocument(ctx, approve: false));
 
 app.Run();

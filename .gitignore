@@ -7,3 +7,6 @@ obj/
 
 # Local working notes, not part of the teaching material
 HANDOFF.md
+
+# Temporary local NuGet feed (e.g. for unreleased FCQRS previews) — never ship it
+nuget.config

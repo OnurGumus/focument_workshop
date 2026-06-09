@@ -23,6 +23,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.*" />
     <PackageReference Include="xunit.v3" Version="3.*" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.*" />
+    <!-- FakeTimeProvider, to drive the quota's sliding window deterministically. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.*" />
   </ItemGroup>
 
   <ItemGroup>

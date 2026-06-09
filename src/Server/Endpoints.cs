@@ -5,7 +5,7 @@
 // An instance class: the cross-cutting dependencies (the read-model connection
 // string, the projection subscription, the document command handler and a
 // logger) are injected once via the constructor, so each endpoint method takes
-// only the request — the HttpContext.
+// only the request — the HttpContext (and, for a review, the verdict).
 
 using System;
 using System.Linq;
@@ -42,6 +42,10 @@ public sealed class Endpoints(
             var title = form["Title"].ToString();
             var content = form["Content"].ToString();
             var existingId = form["Id"].ToString();
+            var username = form["Username"].ToString();
+
+            if (!Username.TryCreate(username, out var owner))
+                return "Error: a username is required";
 
             var docId = string.IsNullOrEmpty(existingId)
                 ? Guid.NewGuid()
@@ -53,17 +57,25 @@ public sealed class Endpoints(
             var cid = Values.NewCID();
             var aggregateId = Values.CreateAggregateId(docId.ToString());
 
-            // Subscribe before sending so we can wait for the read model to catch up.
+            // Subscribe before sending so we can wait for the read model to catch
+            // up. The projection notifies only terminal events, so one is enough,
+            // whether this turns out to be a create (Approved/HeldForApproval) or
+            // an edit of an existing doc (Updated).
             using var awaiter = subs.SubscribeForFirst(cid);
 
-            await documentHandler(
-                e => e is DocumentEvent.CreatedOrUpdated,
+            var result = await documentHandler(
+                e => e is DocumentEvent.Approved or DocumentEvent.HeldForApproval or DocumentEvent.Updated,
                 cid,
                 aggregateId,
-                new DocumentCommand.CreateOrUpdate(document));
+                new DocumentCommand.CreateOrUpdate(document, owner));
 
             await awaiter.Task;
-            return "Document saved!";
+            return result.EventDetails switch
+            {
+                DocumentEvent.HeldForApproval => "Quota exceeded — sent for approval.",
+                DocumentEvent.Updated => "Document updated!",
+                _ => "Document saved!"
+            };
         }
         catch (Exception ex)
         {
@@ -82,7 +94,10 @@ public sealed class Endpoints(
             var form = await ctx.Request.ReadFormAsync();
             var docId = form["Id"].ToString();
             var versionStr = form["Version"].ToString();
+            var username = form["Username"].ToString();
 
+            if (!Username.TryCreate(username, out var owner))
+                return "Error: a username is required";
             if (string.IsNullOrWhiteSpace(docId) || !Guid.TryParse(docId, out var guid))
                 return "Error: invalid document id";
             if (!long.TryParse(versionStr, out var version))
@@ -101,11 +116,13 @@ public sealed class Endpoints(
 
             using var awaiter = subs.SubscribeForFirst(cid);
 
+            // A restore targets an existing document, so it's a plain edit
+            // (Updated) — no quota, no saga.
             await documentHandler(
-                e => e is DocumentEvent.CreatedOrUpdated,
+                e => e is DocumentEvent.Updated or DocumentEvent.Approved or DocumentEvent.HeldForApproval,
                 cid,
                 aggregateId,
-                new DocumentCommand.CreateOrUpdate(document));
+                new DocumentCommand.CreateOrUpdate(document, owner));
 
             await awaiter.Task;
             return "Version restored!";
@@ -113,6 +130,54 @@ public sealed class Endpoints(
         catch (Exception ex)
         {
             log.LogError(ex, "RestoreVersion failed");
+            return "Error: something went wrong";
+        }
+    }
+
+    // A colleague's verdict on a held (over-quota) document — approve or reject.
+    // A *different* user finalises it; the owner can't decide their own, which is
+    // the whole point.
+    public async Task<string> ReviewDocument(HttpContext ctx, bool approve)
+    {
+        var verb = approve ? "approve" : "reject";
+        try
+        {
+            var form = await ctx.Request.ReadFormAsync();
+            var docId = form["Id"].ToString();
+            var username = form["Username"].ToString();
+
+            if (!Username.TryCreate(username, out _))
+                return "Error: a username is required";
+            if (string.IsNullOrWhiteSpace(docId) || !Guid.TryParse(docId, out _))
+                return "Error: invalid document id";
+
+            var doc = ServerQuery.GetDocument(connString, docId);
+            if (doc is null)
+                return "Error: document not found";
+            if (doc.Owner == username)
+                return $"You can't {verb} your own document.";
+
+            var cid = Values.NewCID();
+            var aggregateId = Values.CreateAggregateId(docId);
+
+            using var awaiter = subs.SubscribeForFirst(cid);
+
+            DocumentCommand command = approve
+                ? new DocumentCommand.Approve()
+                : new DocumentCommand.Reject();
+
+            await documentHandler(
+                e => approve ? e is DocumentEvent.Approved : e is DocumentEvent.Rejected,
+                cid,
+                aggregateId,
+                command);
+
+            await awaiter.Task;
+            return approve ? "Approved!" : "Rejected.";
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "{Verb} failed", verb);
             return "Error: something went wrong";
         }
     }

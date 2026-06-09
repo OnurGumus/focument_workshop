@@ -24,8 +24,18 @@ public static class ServerQuery
         using var conn = new SqliteConnection(connString);
         conn.Open();
         return conn.Query<Query.Document>(
-            "SELECT Id, Title, Body, Version, CreatedAt, UpdatedAt FROM Documents ORDER BY UpdatedAt DESC")
+            "SELECT Id, Title, Body, Version, CreatedAt, UpdatedAt, ApprovalStatus, Owner FROM Documents ORDER BY UpdatedAt DESC")
             .ToList();
+    }
+
+    // One document by id (used to check ownership before a colleague approves).
+    public static Query.Document? GetDocument(string connString, string docId)
+    {
+        using var conn = new SqliteConnection(connString);
+        conn.Open();
+        return conn.QueryFirstOrDefault<Query.Document>(
+            "SELECT Id, Title, Body, Version, CreatedAt, UpdatedAt, ApprovalStatus, Owner FROM Documents WHERE Id = @Id",
+            new { Id = docId });
     }
 
     // Every version of one document, newest first (for time travel).

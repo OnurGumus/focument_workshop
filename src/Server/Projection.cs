@@ -27,7 +27,9 @@ public static class Projection
                 Body TEXT NOT NULL,
                 Version INTEGER NOT NULL,
                 CreatedAt TEXT NOT NULL,
-                UpdatedAt TEXT NOT NULL
+                UpdatedAt TEXT NOT NULL,
+                ApprovalStatus TEXT NOT NULL DEFAULT 'Pending',
+                Owner TEXT NOT NULL DEFAULT ''
             )
             """);
 
@@ -71,43 +73,84 @@ public static class Projection
 
         var notify = new List<IMessageWithCID>();
 
-        if (eventObj is FCQRS.Common.Event<DocumentEvent> docEvent
-            && docEvent.EventDetails is DocumentEvent.CreatedOrUpdated created)
+        if (eventObj is FCQRS.Common.Event<DocumentEvent> docEvent)
         {
-            var doc = created.Document;
-            var id = doc.Id.ToString();
-            var title = doc.Title.ToString();
-            var body = doc.Content.ToString();
             var now = docEvent.CreationDate.ToString("o");
 
-            var current = conn.QueryFirstOrDefault<long?>(
-                "SELECT Version FROM Documents WHERE Id = @Id", new { Id = id }, tx);
-            var version = (current ?? 0) + 1;
-
-            if (current is null)
+            switch (docEvent.EventDetails)
             {
-                conn.Execute("""
-                    INSERT INTO Documents (Id, Title, Body, Version, CreatedAt, UpdatedAt)
-                    VALUES (@Id, @Title, @Body, @Version, @Now, @Now)
-                    """, new { Id = id, Title = title, Body = body, Version = version, Now = now }, tx);
-            }
-            else
-            {
-                conn.Execute("""
-                    UPDATE Documents
-                    SET Title = @Title, Body = @Body, Version = @Version, UpdatedAt = @Now
-                    WHERE Id = @Id
-                    """, new { Id = id, Title = title, Body = body, Version = version, Now = now }, tx);
-            }
+                // A brand-new pending document (creation only). Records the owner
+                // and the first version. NOT notified — the web waits for the
+                // saga's terminal verdict (Approved/HeldForApproval) below.
+                case DocumentEvent.CreateOrUpdateRequested created:
+                {
+                    var doc = created.Document;
+                    var id = doc.Id.ToString();
+                    var title = doc.Title.ToString();
+                    var body = doc.Content.ToString();
 
-            // Append this version to the history.
-            conn.Execute("""
-                INSERT OR IGNORE INTO DocumentVersions (Id, Version, Title, Body, CreatedAt)
-                VALUES (@Id, @Version, @Title, @Body, @Now)
-                """, new { Id = id, Version = version, Title = title, Body = body, Now = now }, tx);
+                    conn.Execute("""
+                        INSERT INTO Documents (Id, Title, Body, Version, CreatedAt, UpdatedAt, ApprovalStatus, Owner)
+                        VALUES (@Id, @Title, @Body, 1, @Now, @Now, 'Pending', @Owner)
+                        """, new { Id = id, Title = title, Body = body, Now = now, Owner = created.Owner.ToString() }, tx);
 
-            log.LogInformation("projected {Id} v{Version} at offset {Offset}", id, version, offsetValue);
-            notify.Add(docEvent);
+                    conn.Execute("""
+                        INSERT OR IGNORE INTO DocumentVersions (Id, Version, Title, Body, CreatedAt)
+                        VALUES (@Id, 1, @Title, @Body, @Now)
+                        """, new { Id = id, Title = title, Body = body, Now = now }, tx);
+
+                    log.LogInformation("projected {Id} v1 (pending) at offset {Offset}", id, offsetValue);
+                    break;
+                }
+
+                // A plain edit — new content/version; approval status and owner kept.
+                case DocumentEvent.Updated updated:
+                {
+                    var doc = updated.Document;
+                    var id = doc.Id.ToString();
+                    var title = doc.Title.ToString();
+                    var body = doc.Content.ToString();
+
+                    var maxVersion = conn.QueryFirstOrDefault<long?>(
+                        "SELECT MAX(Version) FROM DocumentVersions WHERE Id = @Id", new { Id = id }, tx);
+                    var version = (maxVersion ?? 0) + 1;
+
+                    conn.Execute("""
+                        UPDATE Documents SET Title = @Title, Body = @Body, Version = @Version, UpdatedAt = @Now
+                        WHERE Id = @Id
+                        """, new { Id = id, Title = title, Body = body, Version = version, Now = now }, tx);
+
+                    conn.Execute("""
+                        INSERT OR IGNORE INTO DocumentVersions (Id, Version, Title, Body, CreatedAt)
+                        VALUES (@Id, @Version, @Title, @Body, @Now)
+                        """, new { Id = id, Version = version, Title = title, Body = body, Now = now }, tx);
+
+                    notify.Add(docEvent);
+                    break;
+                }
+
+                // Terminal verdicts — flip the approval status.
+                case DocumentEvent.Approved approved:
+                    conn.Execute(
+                        "UPDATE Documents SET ApprovalStatus = 'Approved', UpdatedAt = @Now WHERE Id = @Id",
+                        new { Id = approved.DocumentId.ToString(), Now = now }, tx);
+                    notify.Add(docEvent);
+                    break;
+
+                case DocumentEvent.HeldForApproval held:
+                    conn.Execute(
+                        "UPDATE Documents SET ApprovalStatus = 'AwaitingApproval', UpdatedAt = @Now WHERE Id = @Id",
+                        new { Id = held.DocumentId.ToString(), Now = now }, tx);
+                    notify.Add(docEvent);
+                    break;
+
+                case DocumentEvent.Rejected rejected:
+                    conn.Execute(
+                        "UPDATE Documents SET ApprovalStatus = 'Rejected', UpdatedAt = @Now WHERE Id = @Id",
+                        new { Id = rejected.DocumentId.ToString(), Now = now }, tx);
+                    notify.Add(docEvent);
+                    break;
+            }
         }
 
         conn.Execute(
