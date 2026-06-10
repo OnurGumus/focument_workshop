@@ -1,6 +1,8 @@
 {
   "name": "focument_workshop",
-  "build": { "dockerfile": "Dockerfile" },
+  // Prebaked on GHCR by the FCQRS_workshop_setup repo's devcontainer-image
+  // workflow (same toolchain). Pulling beats per-attendee SDK installs.
+  "image": "ghcr.io/onurgumus/fcqrs-workshop-dotnet11:11.0.100-preview.5.26302.115",
   "forwardPorts": [5000],
   "portsAttributes": {
     "5000": { "label": "focument web", "onAutoForward": "openBrowser" }
