@@ -5,7 +5,7 @@
 # with global.json (rollForward there means a clean exact install satisfies it).
 FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
 
-ARG DOTNET_VERSION=11.0.100-preview.4.26230.115
+ARG DOTNET_VERSION=11.0.100-preview.5.26302.115
 RUN curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh \
  && bash /tmp/dotnet-install.sh --version "${DOTNET_VERSION}" --install-dir /usr/share/dotnet \
  && ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
