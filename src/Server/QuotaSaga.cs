@@ -1,7 +1,9 @@
 // The quota saga: the one piece that genuinely needs a saga, because it spans
-// two aggregates. It starts from the Document's CreateOrUpdateRequested event
-// (originator = Document), asks the User aggregate to consume a quota slot, and
-// then tells the Document to Approve or Reject based on the User's verdict.
+// two aggregates — and, on this branch, an external service. It starts from the
+// Document's CreateOrUpdateRequested event (originator = Document), asks the
+// User aggregate to consume a quota slot, gets the EchoService's confirmation
+// (standing in for any external API), and then tells the Document to Approve
+// or Reject.
 //
 // Cross-aggregate mechanics (traced in FCQRS): the saga subscribes to its
 // originator's (Document's) CID topic; when it sends a command to a *different*
@@ -24,17 +26,21 @@ public sealed class QuotaSaga : Saga<DocumentEvent, QuotaSagaData, QuotaState>
 {
     private readonly AggregateFactory _documentFactory;
     private readonly AggregateFactory _userFactory;
+    private readonly Akkling.ActorRefs.IActorRef<object> _echoService;
     private readonly ILogger<QuotaSaga> _log;
 
-    // Takes the aggregates' already-registered factories (from App.Build) so the
-    // saga doesn't re-init them — init lives in one place.
+    // The saga's constructor dependencies are the addresses of everyone it
+    // commands: the aggregates' factories, and the external-service worker's
+    // ref (spawned once in App composition, same idea as the factories).
     public QuotaSaga(
         AggregateFactory documentFactory,
         AggregateFactory userFactory,
+        Akkling.ActorRefs.IActorRef<object> echoService,
         ILogger<QuotaSaga> log)
     {
         _documentFactory = documentFactory;
         _userFactory = userFactory;
+        _echoService = echoService;
         _log = log;
     }
 
@@ -60,11 +66,16 @@ public sealed class QuotaSaga : Saga<DocumentEvent, QuotaSagaData, QuotaState>
             (Event<DocumentEvent> { EventDetails: DocumentEvent.CreateOrUpdateRequested co }, null) =>
                 StateChanged(new QuotaState.CheckingQuota(co.Owner, co.Document.Id)),
 
-            // The user's verdict → approve, or park for a colleague's approval.
+            // The user's verdict → confirm externally first, or park for approval.
             (Event<UserEvent> { EventDetails: UserEvent.QuotaApproved }, QuotaState.CheckingQuota s) =>
-                StateChanged(new QuotaState.Approving(s.DocId)),
+                StateChanged(new QuotaState.Confirming(s.DocId)),
             (Event<UserEvent> { EventDetails: UserEvent.QuotaRejected }, QuotaState.CheckingQuota s) =>
                 StateChanged(new QuotaState.Holding(s.DocId)),
+
+            // The external service answered. Its reply is a plain record from a
+            // plain actor — the saga's obj-based handler matches it like any event.
+            (Confirmed, QuotaState.Confirming s) =>
+                StateChanged(new QuotaState.Approving(s.DocId)),
 
             // The document finalised → we're done.
             (Event<DocumentEvent> { EventDetails: DocumentEvent.Approved }, QuotaState.Approving) =>
@@ -104,6 +115,16 @@ public sealed class QuotaSaga : Saga<DocumentEvent, QuotaSagaData, QuotaState>
                 // DocId makes this idempotent — the saga re-issues it verbatim
                 // on recovery, and the User won't consume a second slot.
                 Commands = [ToUser(s.Owner, new UserCommand.ConsumeQuota(s.DocId))]
+            },
+            // The external call. Described here, performed by the EchoService —
+            // the saga itself never does I/O. On crash-recovery this arm re-runs
+            // and re-sends Confirm (at-least-once), so the service must treat
+            // DocId as an idempotency key. Note the compiler *forced* this arm
+            // into existence the moment Confirming joined the union.
+            QuotaState.Confirming s => new()
+            {
+                Transition = Stay(),
+                Commands = [SagaCommands.ToActor(_echoService, new Confirm(s.DocId))]
             },
             QuotaState.Approving => new()
             {

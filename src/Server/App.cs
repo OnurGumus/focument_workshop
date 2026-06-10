@@ -40,10 +40,21 @@ public static class FocumentComposition
             // from the ones AddAggregate registered, so init stays in one place) and
             // starts whenever a document write is requested.
             .AddSaga<QuotaSaga, DocumentEvent, QuotaSagaData, QuotaState>(
-                create: sp => new QuotaSaga(
-                    sp.AggregateFactory<DocumentAggregate>(),
-                    sp.AggregateFactory<UserAggregate>(),
-                    sp.GetRequiredService<ILogger<QuotaSaga>>()),
+                create: sp =>
+                {
+                    // The external-service worker: an ordinary actor spawned once on
+                    // the same system FCQRS runs on. ActorRefs.typed bridges the raw
+                    // Akka.NET ref to the Akkling-typed ref SagaCommands.ToActor takes.
+                    var system = sp.GetRequiredService<IActor>().System;
+                    var echoLog = sp.GetRequiredService<ILogger<EchoService>>();
+                    var echo = Akkling.ActorRefs.typed<object>(
+                        system.ActorOf(Akka.Actor.Props.Create(() => new EchoService(echoLog)), "echo-service"));
+                    return new QuotaSaga(
+                        sp.AggregateFactory<DocumentAggregate>(),
+                        sp.AggregateFactory<UserAggregate>(),
+                        echo,
+                        sp.GetRequiredService<ILogger<QuotaSaga>>());
+                },
                 startOn: e => e is Event<DocumentEvent> { EventDetails: DocumentEvent.CreateOrUpdateRequested })
 
             // The read-model projection, resumed from the last offset it committed.

@@ -10,13 +10,17 @@ public sealed record QuotaSagaData;
 
 public union QuotaState(
     QuotaState.CheckingQuota,
+    QuotaState.Confirming,
     QuotaState.Approving,
     QuotaState.Holding,
     QuotaState.Done)
 {
     // Waiting to hear the quota verdict; remembers who and which document.
     public record CheckingQuota(Username Owner, DocumentId DocId);
-    // Quota granted — tell the document to approve.
+    // Quota granted — waiting for the external service to confirm. The state is
+    // journaled, so if we crash mid-call the saga recovers here and asks again.
+    public record Confirming(DocumentId DocId);
+    // Confirmed — tell the document to approve.
     public record Approving(DocumentId DocId);
     // Quota denied — tell the document to hold for a colleague's approval.
     public record Holding(DocumentId DocId);
