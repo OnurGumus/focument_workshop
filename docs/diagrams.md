@@ -13,6 +13,10 @@ The whole system is one idea: **commands are decided into events, events are the
 source of truth, and a read model is projected from them**. A saga coordinates the
 two aggregates when a write needs a quota check.
 
+![The CQRS flow: a command and the current state meet in the command handler, which
+produces an event — an immutable fact; apply folds the event back into the state,
+which loops around for the next command](cqrs_flow.jpeg)
+
 ---
 
 ## 1. Architecture / data flow
