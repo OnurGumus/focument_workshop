@@ -10,6 +10,13 @@ browse a document's **version history** and restore an earlier version, and ther
 **quota** (3 documents/minute) enforced by a **saga** that parks over-quota writes for a colleague to
 approve.
 
+**The point of CQRS in one picture** — on the left, the traditional single
+model: one Entity Framework graph trying to serve every reader and writer at
+once. On the right, the split: small, independent **aggregates** own the writes,
+and a flat **DTO-style read model** serves the queries.
+
+![Traditional single-model Entity Framework graph vs the CQRS split: separate aggregates on the command side, DTO-style read model on the query side](docs/two-models.png)
+
 ## Prerequisites
 
 - **.NET 11 SDK (preview)** — C# 15 `union` types need `LangVersion preview`. `global.json` pins the
