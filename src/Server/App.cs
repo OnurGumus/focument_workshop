@@ -32,14 +32,15 @@ public static class FocumentComposition
 
             // Register every aggregate that must go live. Both Document and User
             // are registered even though the web only commands Document — the saga
-            // drives User. Drop either and the saga silently stalls.
-            .AddAggregate<DocumentAggregate, DocumentState, DocumentCommand, DocumentEvent>()
-            .AddAggregate<UserAggregate, UserState, UserCommand, UserEvent>()
+            // drives User. Drop either and the saga silently stalls. The state /
+            // command / event types come off each class's Aggregate<,,> base.
+            .AddAggregate<DocumentAggregate>()
+            .AddAggregate<UserAggregate>()
 
             // The saga spans the two aggregates: it gets their factories (looked up
             // from the ones AddAggregate registered, so init stays in one place) and
             // starts whenever a document write is requested.
-            .AddSaga<QuotaSaga, DocumentEvent, QuotaSagaData, QuotaState>(
+            .AddSaga(
                 create: sp => new QuotaSaga(
                     sp.AggregateFactory<DocumentAggregate>(),
                     sp.AggregateFactory<UserAggregate>(),
