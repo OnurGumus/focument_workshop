@@ -10,6 +10,7 @@ using Microsoft.Data.Sqlite;
 using Dapper;
 using Model;
 using static FCQRS.Model.Data;
+using static FCQRS.Common;
 
 namespace Server;
 
@@ -57,9 +58,11 @@ public static class Projection
             """);
     }
 
-    // Called once per event. Returns the events to re-publish to subscribers
-    // (used for read-your-writes); an empty list means "nothing to notify".
-    public static IList<IMessageWithCID> HandleEventWrapper(
+    // Called once per event. Returns Publish to re-publish this event to
+    // subscribers (read-your-writes), or Suppress to update the read model
+    // silently — e.g. the pending creation, where the web waits for the saga's
+    // terminal verdict rather than the intermediate event.
+    public static Notify HandleEventWrapper(
         ILoggerFactory loggerFactory,
         string connString,
         long offsetValue,
@@ -71,7 +74,7 @@ public static class Projection
         conn.Open();
         using var tx = conn.BeginTransaction();
 
-        var notify = new List<IMessageWithCID>();
+        var verdict = Notify.Suppress;
 
         if (eventObj is FCQRS.Common.Event<DocumentEvent> docEvent)
         {
@@ -125,7 +128,7 @@ public static class Projection
                         VALUES (@Id, @Version, @Title, @Body, @Now)
                         """, new { Id = id, Version = version, Title = title, Body = body, Now = now }, tx);
 
-                    notify.Add(docEvent);
+                    verdict = Notify.Publish;
                     break;
                 }
 
@@ -134,21 +137,21 @@ public static class Projection
                     conn.Execute(
                         "UPDATE Documents SET ApprovalStatus = 'Approved', UpdatedAt = @Now WHERE Id = @Id",
                         new { Id = approved.DocumentId.ToString(), Now = now }, tx);
-                    notify.Add(docEvent);
+                    verdict = Notify.Publish;
                     break;
 
                 case DocumentEvent.HeldForApproval held:
                     conn.Execute(
                         "UPDATE Documents SET ApprovalStatus = 'AwaitingApproval', UpdatedAt = @Now WHERE Id = @Id",
                         new { Id = held.DocumentId.ToString(), Now = now }, tx);
-                    notify.Add(docEvent);
+                    verdict = Notify.Publish;
                     break;
 
                 case DocumentEvent.Rejected rejected:
                     conn.Execute(
                         "UPDATE Documents SET ApprovalStatus = 'Rejected', UpdatedAt = @Now WHERE Id = @Id",
                         new { Id = rejected.DocumentId.ToString(), Now = now }, tx);
-                    notify.Add(docEvent);
+                    verdict = Notify.Publish;
                     break;
             }
         }
@@ -158,6 +161,6 @@ public static class Projection
             new { Offset = offsetValue }, tx);
 
         tx.Commit();
-        return notify;
+        return verdict;
     }
 }
